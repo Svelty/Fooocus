@@ -106,20 +106,3 @@ if args.gpu_device_id is not None:
 
 download_models()
 
-# import threading
-# from api import run_app
-
-# def start_flask_app():
-#     run_app()
-
-# if __name__ == '__main__':
-#     flask_thread = threading.Thread(target=start_flask_app)
-#     flask_thread.start()
-
-#     print("Flask app has started in a separate thread.")
-# else:
-#     print("----------------wtf-------------------")
-
-from webui import *
-
-

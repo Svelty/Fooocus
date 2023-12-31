@@ -116,6 +116,8 @@ def worker():
     def handler(async_task):
         execution_start_time = time.perf_counter()
 
+        print('AsyncWorker handler called with args: ', async_task.args)
+
         args = async_task.args
         args.reverse()
 
@@ -139,6 +141,28 @@ def worker():
         outpaint_selections = args.pop()
         inpaint_input_image = args.pop()
         inpaint_additional_prompt = args.pop()
+
+        print("prompt:", prompt)
+        print("negative_prompt:", negative_prompt)
+        print("style_selections:", style_selections)
+        print("performance_selection:", performance_selection)
+        print("aspect_ratios_selection:", aspect_ratios_selection)
+        print("image_number:", image_number)
+        print("image_seed:", image_seed)
+        print("sharpness:", sharpness)
+        print("guidance_scale:", guidance_scale)
+        print("base_model_name:", base_model_name)
+        print("refiner_model_name:", refiner_model_name)
+        print("refiner_switch:", refiner_switch)
+        print("loras:", loras)
+        print("input_image_checkbox:", input_image_checkbox)
+        print("current_tab:", current_tab)
+        print("uov_method:", uov_method)
+        print("uov_input_image:", uov_input_image)
+        print("outpaint_selections:", outpaint_selections)
+        print("inpaint_input_image:", inpaint_input_image)
+        print("inpaint_additional_prompt:", inpaint_additional_prompt)
+
 
         cn_tasks = {x: [] for x in flags.ip_list}
         for _ in range(4):

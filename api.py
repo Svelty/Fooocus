@@ -59,6 +59,7 @@ class ImageGenSchema(Schema):
     style_selections = fields.List(fields.Str(), required=False, data_key="styleSelections")
     negative_prompt = fields.Str(required=False, data_key="negativePrompt")
     prompt = fields.Str(required=True, data_key="prompt")
+    enable_preview_images = fields.Bool(required=False, data_key="enablePreviewImages")
 
     @post_load
     def make_snake_case(self, data, **kwargs):
@@ -78,6 +79,9 @@ def process_params():
     schema = ImageGenSchema()
     try:
         data = schema.load(request.json)
+
+        number_of_images = data.get('image_number') if data.get('image_number') else 1
+        enable_preview_images = data.get('enable_preview_images') if data.get('enable_preview_images') else False
         
         config = [
             data.get('prompt'),
@@ -85,7 +89,7 @@ def process_params():
             data.get('style_selections') if data.get('style_selections') else [], 
             data.get('performance_selection'),
             data.get('aspect_ratios_selection'), #'1152×896', #TODO: aspect_ratio '1152×896 <span style="color: grey;"> ∣ 9:7</span>',
-            data.get('image_number') if data.get('image_number') else 1,
+            number_of_images,
             data.get('image_seed'),
             data.get('sharpness') if data.get('sharpness') else 2,
             data.get('guidance_scale') if data.get('guidance_scale') else 7,
@@ -124,7 +128,7 @@ def process_params():
 
         # print("---image/gen endpoint results: ", task.results)
 
-        return Response(response_stream(task), mimetype='text/event-stream')
+        return Response(response_stream(task, number_of_images, enable_preview_images), mimetype='text/event-stream')
 
         return jsonify("Horrya")
     except ValidationError as err:
@@ -132,10 +136,12 @@ def process_params():
     
     return jsonify({"message": "Something unexpected happened"}), 500
 
-def response_stream(task):
+def response_stream(task, number_of_images, enable_preview_images):
     data = { "updateType":"init", "percentage": 1, "title": 'Waiting for task to start ...', }
     json_data = json.dumps(data)
     yield f"{json_data}\n\n"
+
+    image_results_sent = 0
 
     finished = False
     while not finished:
@@ -153,21 +159,27 @@ def response_stream(task):
                 percentage, title, image = product
                 print ('NOT FINISHED, preview', percentage, title)
                 # yield (percentage, title)
-                if isinstance(image, np.ndarray):
-                    print("Image shape: ", image.shape)
-                    image = image.tolist()
-                data = { 
-                    "updateType": "preview", 
-                    "percentage": percentage, 
-                    "title": title, 
-                    "image": image
-                    }
-                json_data = json.dumps(data)
-                yield f"{json_data}\n\n"
-                # yield gr.update(visible=True, value=modules.html.make_progress_html(percentage, title)), \
-                #     gr.update(visible=True, value=image) if image is not None else gr.update(), \
-                #     gr.update(), \
-                #     gr.update(visible=False)
+                if (enable_preview_images):
+                    if isinstance(image, np.ndarray):
+                        print("Image shape: ", image.shape)
+                        image = image.tolist()
+                    data = { 
+                        "updateType": "preview", 
+                        "percentage": percentage, 
+                        "title": title, 
+                        "image": image
+                        }
+                    json_data = json.dumps(data)
+                    yield f"{json_data}\n\n"
+                else:
+                    data = { 
+                        "updateType": "preview", 
+                        "percentage": percentage, 
+                        "title": title, 
+                        }
+                    json_data = json.dumps(data)
+                    yield f"{json_data}\n\n"
+
             if flag == 'results':
                 print ('RESULTS, results')
                 print(f"The type of 'product' is: {type(product)}")
@@ -176,7 +188,8 @@ def response_stream(task):
                     product = product.tolist()
                 elif isinstance(product, list):
                     # Convert each ndarray element in the list to a list
-                    product = [item.tolist() if isinstance(item, np.ndarray) else item for item in product]
+                    # product = [item.tolist() if isinstance(item, np.ndarray) else item for item in product]
+                    product = product[image_results_sent].tolist()
                 else:
                     product = product
                 data = {
@@ -184,11 +197,9 @@ def response_stream(task):
                     "product": product
                 }
                 json_data = json.dumps(data)
+                image_results_sent = image_results_sent + 1
                 yield f"{json_data}\n\n"
-                # yield gr.update(visible=True), \
-                #     gr.update(visible=True), \
-                #     gr.update(visible=True, value=product), \
-                #     gr.update(visible=False)
+
             if flag == 'finish':
                 print ('FINISHED')
                 print(f"The type of 'product' is: {type(product)}")
@@ -202,16 +213,10 @@ def response_stream(task):
                     product = product
                 data = {
                     "updateType": "finished", 
-                    "product": product
+                    # "product": product
                 }
                 json_data = json.dumps(data)
                 yield f"{json_data}\n\n"
-                # yield gr.update(visible=False), \
-                #     gr.update(visible=False), \
-                #     gr.update(visible=False), \
-                #     gr.update(visible=True, value=product)
-                # print("TASK FINISHED, results:", task.results)
-                # print("TASK FINISHED, product:", product)
                 finished = True
 
 

@@ -2,6 +2,10 @@ from flask import Flask, request, jsonify, Response
 from marshmallow import Schema, fields, ValidationError, post_load, validate
 import modules.async_worker as worker
 import modules.advanced_parameters as advanced_parameters
+import modules.style_sorter as style_sorter
+import shared
+from modules.sdxl_styles import legal_style_names
+
 import time
 import json
 import sys
@@ -14,19 +18,17 @@ print('[System ARGV] ' + str(sys.argv))
 temp = sys.argv
 sys.argv = ['launch_from_api.py', '--preset', 'anime']
 from launch_from_api import *
+import modules.config as config
 sys.argv = temp
 #
 
 app = Flask(__name__)
 CORS(app)
 
-#TODO: instead of doing this i should start this api from the command line then import a version of launch.py that doesn't include the webUI
-# def run_app():
-#     app.run(debug=True, use_reloader=False)
 
 @app.route("/")
 def hello_world():
-    return "<p>Hello, World!</p>"
+    return "Hello, World!"
 
 
 @app.route('/json', methods=['POST'])
@@ -37,19 +39,73 @@ def json_post():
         "json": "kindof"
     }
 
+#TODO: getStyles, getAspectRatios, getModels
+@app.route('/styles')
+def get_styles():
+    if len(style_sorter.all_styles ) == 0:
+        style_sorter.try_load_sorted_styles(
+            style_names=legal_style_names,
+            default_selected=config.default_styles)
+    return style_sorter.all_styles
+
+@app.route('/styles/default')
+def get_default_styles():
+    return config.default_styles
+
+@app.route('/aspect-ratios')
+def get_aspect_ratios():
+    available = config.available_aspect_ratios
+    aspect_ratios = []
+    for ratio in available:
+        split = ratio.split("<")
+        dimensions = split[0].strip()
+        aspect_ratio = split[1].split(">")[1].strip()[1:].strip()
+        aspect_ratios.append({ "dimensions": dimensions, "ratio": aspect_ratio })
+
+    return jsonify(aspect_ratios)
+
+@app.route('/models')
+def get_models():
+    return config.get_model_filenames(config.path_checkpoints)
+
+#TODO: make this update 
+@app.route('/loras')
+def get_loras():
+    config.update_all_model_names()
+    return config.lora_filenames
+
+#TODO: if this works there needs to be some sort of ID associated with each 
+@app.route('/image/gen/cancel')
+def cancel_image_gen():
+    import ldm_patched.modules.model_management as model_management
+    shared.last_stop = 'stop'
+    model_management.interrupt_current_processing()
+    return "success"
+
+@app.route('/image/gen/skip')
+def skip_image_gen():
+    import ldm_patched.modules.model_management as model_management
+    shared.last_stop = 'skip'
+    model_management.interrupt_current_processing()
+    return "success"
+
+class LoraSchema(Schema):
+    model = fields.Str(required=True)
+    weight = fields.Float(required=True) 
 
 class ImageGenSchema(Schema):
     # name = fields.Str(required=True, validate=lambda s: 4 <= len(s) <= 25)
     # age = fields.Int(required=True, validate=lambda n: 0 <= n <= 100)
 
     # loras_parameters = fields.List(fields.List(fields.Raw()), required=False, data_key="lorasParameters")
+    lora_parameters = fields.List(fields.Nested(LoraSchema), required=False, data_key="loraParameters" , validate=validate.Length(max=5))
     refiner_switch = fields.Float(required=False, data_key="refinerSwitch")
     refiner_model_name = fields.Str(required=False, data_key="refinerModelName")
     base_model_name = fields.Str(required=True, data_key="baseModelName")
     guidance_scale = fields.Int(required=False, data_key="guidanceScale")
     sharpness = fields.Int(required=False, data_key="sharpness")
     image_seed = fields.Str(required=True, data_key="imageSeed")
-    image_number = fields.Int(required=False, data_key="imageNumber")
+    image_number = fields.Int(required=False, data_key="imageNumber", validate=lambda n: 0 < n <= 24)
     aspect_ratios_selection = fields.Str(required=True, data_key="aspectRatiosSelection")
     performance_selection = fields.Str(
         required=True, 
@@ -72,8 +128,10 @@ class ImageGenSchema(Schema):
         str1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
         return re.sub('([a-z0-9])([A-Z])', r'\1_\2', str1).lower()
 
+#TODO: stop and skip
+#TODO: return expanded prompt
 @app.route('/image/gen', methods=['POST'])
-def process_params():
+def image_gen():
     print("Image gen endpoint")
 
     schema = ImageGenSchema()
@@ -107,7 +165,18 @@ def process_params():
             None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt'
         ]
 
-        lora_config = ['sd_xl_offset_example-lora_1.0.safetensors', 0.5, 'None', 1, 'None', 1, 'None', 1, 'None', 1]
+        lora_params = data.get('lora_parameters') if data.get('lora_parameters') else []
+        while (len(lora_params) < 5):
+            lora_params.append({ "model":"None", "weight": 0 })
+        # lora_config = [element for item in lora_params for element in (item['model'], item['weight'])]
+        lora_config = []
+        for item in lora_params:
+            lora_config.extend([item['model'], item['weight']])
+        
+        print("----------------- LORA CONFIG -----------------------------")
+        print(lora_config)
+
+        # lora_config = ['sd_xl_offset_example-lora_1.0.safetensors', 0.5, 'None', 1, 'None', 1, 'None', 1, 'None', 1]
         lora_config_index = 12
         values = config[:lora_config_index] + lora_config + config[lora_config_index:]
 
@@ -207,14 +276,23 @@ def response_stream(task, number_of_images, enable_preview_images):
                     print("Product shape: ", product.shape)
                     product = product.tolist()
                 elif isinstance(product, list):
+                    print("PRODUCT LENGTH: ", )
                     # Convert each ndarray element in the list to a list
                     product = [item.tolist() if isinstance(item, np.ndarray) else item for item in product]
                 else:
                     product = product
-                data = {
-                    "updateType": "finished", 
-                    # "product": product
-                }
+                
+                data
+                if len(product) == 1:
+                    data = {
+                        "updateType": "finished", 
+                        "products": product
+                    }
+                else:
+                    data = {
+                        "updateType": "finished", 
+                        # "products": product
+                    }
                 json_data = json.dumps(data)
                 yield f"{json_data}\n\n"
                 finished = True
@@ -346,84 +424,3 @@ def response_stream(task, number_of_images, enable_preview_images):
     
 #     return jsonify({"message": "Something unexpected happened"}), 500
 
-# def response_stream(task):
-#     data = { "updateType":"init", "percentage": 1, "title": 'Waiting for task to start ...', }
-#     json_data = json.dumps(data)
-#     yield f"{json_data}\n\n"
-
-#     finished = False
-#     while not finished:
-#         time.sleep(0.01)
-#         if len(task.yields) > 0:
-#             flag, product = task.yields.pop(0)
-#             if flag == 'preview':
-
-#                 # help bad internet connection by skipping duplicated preview
-#                 if len(task.yields) > 0:  # if we have the next item
-#                     if task.yields[0][0] == 'preview':   # if the next item is also a preview
-#                         # print('Skipped one preview for better internet connection.')
-#                         continue
-
-#                 percentage, title, image = product
-#                 print ('NOT FINISHED, preview', percentage, title)
-#                 # yield (percentage, title)
-#                 if isinstance(image, np.ndarray):
-#                     print("Image shape: ", image.shape)
-#                     image = image.tolist()
-#                 data = { 
-#                     "updateType": "preview", 
-#                     "percentage": percentage, 
-#                     "title": title, 
-#                     "image": image
-#                     }
-#                 json_data = json.dumps(data)
-#                 yield f"{json_data}\n\n"
-#                 # yield gr.update(visible=True, value=modules.html.make_progress_html(percentage, title)), \
-#                 #     gr.update(visible=True, value=image) if image is not None else gr.update(), \
-#                 #     gr.update(), \
-#                 #     gr.update(visible=False)
-#             if flag == 'results':
-#                 print ('RESULTS, results')
-#                 print(f"The type of 'product' is: {type(product)}")
-#                 if isinstance(product, np.ndarray):
-#                     print("Product shape: ", product.shape)
-#                     product = product.tolist()
-#                 elif isinstance(product, list):
-#                     # Convert each ndarray element in the list to a list
-#                     product = [item.tolist() if isinstance(item, np.ndarray) else item for item in product]
-#                 else:
-#                     product = product
-#                 data = {
-#                     "updateType": "results", 
-#                     "product": product
-#                 }
-#                 json_data = json.dumps(data)
-#                 yield f"{json_data}\n\n"
-#                 # yield gr.update(visible=True), \
-#                 #     gr.update(visible=True), \
-#                 #     gr.update(visible=True, value=product), \
-#                 #     gr.update(visible=False)
-#             if flag == 'finish':
-#                 print ('FINISHED')
-#                 print(f"The type of 'product' is: {type(product)}")
-#                 if isinstance(product, np.ndarray):
-#                     print("Product shape: ", product.shape)
-#                     product = product.tolist()
-#                 elif isinstance(product, list):
-#                     # Convert each ndarray element in the list to a list
-#                     product = [item.tolist() if isinstance(item, np.ndarray) else item for item in product]
-#                 else:
-#                     product = product
-#                 data = {
-#                     "updateType": "finished", 
-#                     "product": product
-#                 }
-#                 json_data = json.dumps(data)
-#                 yield f"{json_data}\n\n"
-#                 # yield gr.update(visible=False), \
-#                 #     gr.update(visible=False), \
-#                 #     gr.update(visible=False), \
-#                 #     gr.update(visible=True, value=product)
-#                 # print("TASK FINISHED, results:", task.results)
-#                 # print("TASK FINISHED, product:", product)
-#                 finished = True

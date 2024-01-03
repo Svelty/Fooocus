@@ -149,6 +149,10 @@ Or if you want to open a remote port, use
 
 Use `python entry_with_update.py --preset anime` or `python entry_with_update.py --preset realistic` for Fooocus Anime/Realistic Edition.
 
+<!-- TODO: additional details on api mode -->
+Run flask api in dev mode
+    flask --app api run
+
 ### Linux (Using Python Venv)
 
 Your Linux needs to have **Python 3.10** installed, and lets say your Python can be called with command **python3** with your venv system working, you can

@@ -13,6 +13,10 @@ import numpy as np
 
 from flask_cors import CORS
 
+from PIL import Image
+import io
+import base64
+
 #gross
 print('[System ARGV] ' + str(sys.argv))
 temp = sys.argv
@@ -229,15 +233,28 @@ def response_stream(task, number_of_images, enable_preview_images):
                 print ('NOT FINISHED, preview', percentage, title)
                 # yield (percentage, title)
                 if (enable_preview_images):
+
+                    image_url = ""
+                    height = 0
+                    width = 0
+
                     if isinstance(image, np.ndarray):
                         print("Image shape: ", image.shape)
-                        image = image.tolist()
+                        image_url = encode_image(image)
+                        height = image.shape[0]
+                        width = image.shape[1]
+                        # image = image.tolist()
                     data = { 
                         "updateType": "preview", 
                         "percentage": percentage, 
                         "title": title, 
-                        "image": image
+                        # "image": image,
+                        "imageData": { 
+                            "imageUrl": image_url,
+                            "height": height,
+                            "width": width
                         }
+                    }
                     json_data = json.dumps(data)
                     yield f"{json_data}\n\n"
                 else:
@@ -252,18 +269,34 @@ def response_stream(task, number_of_images, enable_preview_images):
             if flag == 'results':
                 print ('RESULTS, results')
                 print(f"The type of 'product' is: {type(product)}")
+
+                image_url = ""
+                height = 0
+                width = 0
+
                 if isinstance(product, np.ndarray):
+                    image_url = encode_image(product)
+
                     print("Product shape: ", product.shape)
-                    product = product.tolist()
+                    # product = product.tolist()
+                    
                 elif isinstance(product, list):
+                    image_url = encode_image(product[image_results_sent])
+                    height = product[image_results_sent].shape[0]
+                    width = product[image_results_sent].shape[1]
                     # Convert each ndarray element in the list to a list
                     # product = [item.tolist() if isinstance(item, np.ndarray) else item for item in product]
-                    product = product[image_results_sent].tolist()
-                else:
-                    product = product
+                    # product = product[image_results_sent].tolist()
+                # else:
+                #     product = product
                 data = {
                     "updateType": "results", 
-                    "product": product
+                    # "product": product,
+                    "imageData": {
+                        "imageUrl": image_url,
+                        "height": height,
+                        "width": width
+                    }
                 }
                 json_data = json.dumps(data)
                 image_results_sent = image_results_sent + 1
@@ -272,21 +305,33 @@ def response_stream(task, number_of_images, enable_preview_images):
             if flag == 'finish':
                 print ('FINISHED')
                 print(f"The type of 'product' is: {type(product)}")
+
+                image_url = ""
+                height = 0
+                width = 0
+                image_urls = []
+
                 if isinstance(product, np.ndarray):
+                    image_url = encode_image(product)
+                    height = product.shape[0]
+                    width = product.shape[1]
                     print("Product shape: ", product.shape)
-                    product = product.tolist()
+                    # product = product.tolist()
                 elif isinstance(product, list):
                     print("PRODUCT LENGTH: ", )
+                    image_urls = [{ "imageUrl": encode_image(item), "height": item.shape[0], "width": item.shape[1] } if isinstance(item, np.ndarray) else "" for item in product]
                     # Convert each ndarray element in the list to a list
-                    product = [item.tolist() if isinstance(item, np.ndarray) else item for item in product]
-                else:
-                    product = product
+                    # product = [item.tolist() if isinstance(item, np.ndarray) else item for item in product]
+                # else:
+                #     image_url = encode_image(product)
+                    # product = product
                 
                 data
                 if len(product) == 1:
                     data = {
                         "updateType": "finished", 
-                        "products": product
+                        # "products": product,
+                        "imagesData": image_urls   
                     }
                 else:
                     data = {
@@ -297,7 +342,22 @@ def response_stream(task, number_of_images, enable_preview_images):
                 yield f"{json_data}\n\n"
                 finished = True
 
+def encode_image(image):
+    if isinstance(image, np.ndarray):
+        img = Image.fromarray(image)
 
+        # Save the image to a buffer
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")  # You can change the format to JPEG or other types
+        buffer.seek(0)
+
+        # Encode the image in base64
+        img_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+        # Create the Data URL
+        return f"data:image/png;base64,{img_base64}"
+    else:
+        raise Exception("image must be num py array")
 
 
 # @app.route('/image/gen/2', methods=['POST'])

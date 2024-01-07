@@ -36,8 +36,7 @@
         "Fooocus Masterpiece",
         "SAI Anime",
         "SAI Digital Art",
-        "SAI Enhance",
-        "SAI Fantasy Art"
+        "SAI Enhance"
     ],
     "default_aspect_ratio": "896*1152",
     "checkpoint_downloads": {
